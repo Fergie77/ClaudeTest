@@ -1,3 +1,17 @@
 [build]
-  functions = "Netlify/Functions"
-  publish = "dist"
+  command = "npm install"
+  functions = "netlify/functions"
+  publish = "public"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/q/*"
+  to = "/.netlify/functions/q-redirect/:splat"
+  status = 200

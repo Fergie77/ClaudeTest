@@ -1,0 +1,863 @@
+# Dynamic QR Code Management System
+
+## Project Overview
+
+Full-stack application for creating and managing dynamic QR codes. QR codes contain short URLs that redirect to your backend, allowing you to change the destination or content without reprinting the QR code.
+
+**Key Features:**
+- Generate QR codes for links and contact cards (vCards)
+- Edit the destination/content after the QR code is printed
+- Download QR codes as PNG images
+- SQLite database for persistence
+- Clean, responsive UI
+
+## Architecture
+
+QR codes contain URLs like `https://yourdomain.com/q/abc123`. When scanned:
+- **Links**: Backend redirects to the target URL
+- **vCards**: Backend serves a downloadable `.vcf` file
+
+The QR code image never changes, but you can update what `abc123` points to at any time.
+
+---
+
+## File Structure
+
+```
+qr-manager/
+├── package.json
+├── server.js
+└── public/
+    └── index.html
+```
+
+---
+
+## Installation
+
+```bash
+mkdir qr-manager
+cd qr-manager
+mkdir public
+
+# Create files below, then:
+npm install
+npm start
+```
+
+Visit `http://localhost:3000`
+
+---
+
+## package.json
+
+```json
+{
+  "name": "qr-manager",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "better-sqlite3": "^9.2.2",
+    "qrcode": "^1.5.3",
+    "nanoid": "^5.0.4"
+  }
+}
+```
+
+---
+
+## server.js
+
+```javascript
+import express from 'express';
+import Database from 'better-sqlite3';
+import QRCode from 'qrcode';
+import { nanoid } from 'nanoid';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const app = express();
+const db = new Database('qrcodes.db');
+
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS qr_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    short_id TEXT UNIQUE NOT NULL,
+    type TEXT NOT NULL,
+    data TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+app.use(express.json());
+app.use(express.static('public'));
+
+app.post('/api/qr', async (req, res) => {
+  const { type, data } = req.body;
+  const shortId = nanoid(8);
+  
+  const stmt = db.prepare(
+    'INSERT INTO qr_codes (short_id, type, data) VALUES (?, ?, ?)'
+  );
+  const result = stmt.run(shortId, type, JSON.stringify(data));
+  
+  const qrUrl = `${BASE_URL}/q/${shortId}`;
+  const qrImage = await QRCode.toDataURL(qrUrl, { width: 512, margin: 2 });
+  
+  res.json({
+    id: result.lastInsertRowid,
+    shortId,
+    qrUrl,
+    qrImage,
+    type,
+    data
+  });
+});
+
+app.get('/api/qr', (req, res) => {
+  const stmt = db.prepare('SELECT * FROM qr_codes ORDER BY created_at DESC');
+  const codes = stmt.all();
+  
+  res.json(codes.map(code => ({
+    ...code,
+    data: JSON.parse(code.data),
+    qrUrl: `${BASE_URL}/q/${code.short_id}`
+  })));
+});
+
+app.get('/api/qr/:id', (req, res) => {
+  const stmt = db.prepare('SELECT * FROM qr_codes WHERE id = ?');
+  const code = stmt.get(req.params.id);
+  
+  if (!code) {
+    return res.status(404).json({ error: 'QR code not found' });
+  }
+  
+  res.json({
+    ...code,
+    data: JSON.parse(code.data),
+    qrUrl: `${BASE_URL}/q/${code.short_id}`
+  });
+});
+
+app.put('/api/qr/:id', (req, res) => {
+  const { type, data } = req.body;
+  
+  const stmt = db.prepare(
+    'UPDATE qr_codes SET type = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  );
+  const result = stmt.run(type, JSON.stringify(data), req.params.id);
+  
+  if (result.changes === 0) {
+    return res.status(404).json({ error: 'QR code not found' });
+  }
+  
+  res.json({ success: true });
+});
+
+app.delete('/api/qr/:id', (req, res) => {
+  const stmt = db.prepare('DELETE FROM qr_codes WHERE id = ?');
+  const result = stmt.run(req.params.id);
+  
+  if (result.changes === 0) {
+    return res.status(404).json({ error: 'QR code not found' });
+  }
+  
+  res.json({ success: true });
+});
+
+app.get('/api/qr/:id/image', async (req, res) => {
+  const stmt = db.prepare('SELECT short_id FROM qr_codes WHERE id = ?');
+  const code = stmt.get(req.params.id);
+  
+  if (!code) {
+    return res.status(404).send('Not found');
+  }
+  
+  const qrUrl = `${BASE_URL}/q/${code.short_id}`;
+  const buffer = await QRCode.toBuffer(qrUrl, { width: 512, margin: 2 });
+  
+  res.type('png').send(buffer);
+});
+
+app.get('/q/:shortId', (req, res) => {
+  const stmt = db.prepare('SELECT type, data FROM qr_codes WHERE short_id = ?');
+  const code = stmt.get(req.params.shortId);
+  
+  if (!code) {
+    return res.status(404).send('QR code not found');
+  }
+  
+  const data = JSON.parse(code.data);
+  
+  if (code.type === 'link') {
+    res.redirect(data.url);
+  } else if (code.type === 'vcard') {
+    const vcard = generateVCard(data);
+    res.type('text/vcard');
+    res.header('Content-Disposition', `attachment; filename="${data.firstName}_${data.lastName}.vcf"`);
+    res.send(vcard);
+  }
+});
+
+function generateVCard(data) {
+  const lines = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    `FN:${data.firstName} ${data.lastName}`,
+    `N:${data.lastName};${data.firstName};;;`
+  ];
+  
+  if (data.email) lines.push(`EMAIL:${data.email}`);
+  if (data.phone) lines.push(`TEL:${data.phone}`);
+  if (data.organization) lines.push(`ORG:${data.organization}`);
+  if (data.title) lines.push(`TITLE:${data.title}`);
+  if (data.website) lines.push(`URL:${data.website}`);
+  
+  lines.push('END:VCARD');
+  
+  return lines.join('\r\n');
+}
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on ${BASE_URL}`);
+});
+```
+
+---
+
+## public/index.html
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR Code Manager</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    header {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    h1 {
+      margin-bottom: 10px;
+    }
+
+    .subtitle {
+      color: #666;
+    }
+
+    .actions {
+      margin-bottom: 20px;
+    }
+
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    button.secondary {
+      background: #6c757d;
+    }
+
+    button.secondary:hover {
+      background: #545b62;
+    }
+
+    button.danger {
+      background: #dc3545;
+    }
+
+    button.danger:hover {
+      background: #c82333;
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+    }
+
+    .modal.active {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-content {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 500px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .modal-header h2 {
+      margin: 0;
+    }
+
+    .close {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      padding: 0;
+      color: #666;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 500;
+      color: #333;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    .type-selector {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .type-btn {
+      flex: 1;
+      padding: 12px;
+      background: #f8f9fa;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    .type-btn.active {
+      background: #e7f3ff;
+      border-color: #007bff;
+      color: #007bff;
+    }
+
+    .qr-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px;
+    }
+
+    .qr-card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .qr-image {
+      width: 100%;
+      height: auto;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+
+    .qr-info {
+      margin-bottom: 15px;
+    }
+
+    .qr-type {
+      display: inline-block;
+      padding: 4px 8px;
+      background: #e7f3ff;
+      color: #007bff;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    .qr-data {
+      color: #666;
+      font-size: 14px;
+      word-break: break-word;
+    }
+
+    .qr-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .qr-actions button {
+      flex: 1;
+      padding: 8px;
+      font-size: 13px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      background: white;
+      border-radius: 8px;
+    }
+
+    .empty-state h3 {
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    .empty-state p {
+      color: #666;
+      margin-bottom: 20px;
+    }
+
+    .dynamic-fields {
+      display: none;
+    }
+
+    .dynamic-fields.active {
+      display: block;
+    }
+
+    .qr-url {
+      font-family: monospace;
+      font-size: 12px;
+      color: #666;
+      margin-top: 8px;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>QR Code Manager</h1>
+      <p class="subtitle">Create dynamic QR codes that you can update anytime</p>
+    </header>
+
+    <div class="actions">
+      <button onclick="openCreateModal()">+ Create QR Code</button>
+    </div>
+
+    <div id="qrGrid" class="qr-grid"></div>
+  </div>
+
+  <div id="createModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modalTitle">Create QR Code</h2>
+        <button class="close" onclick="closeModal()">&times;</button>
+      </div>
+
+      <div class="type-selector">
+        <button class="type-btn active" data-type="link" onclick="selectType('link')">Link</button>
+        <button class="type-btn" data-type="vcard" onclick="selectType('vcard')">Contact Card</button>
+      </div>
+
+      <form id="qrForm" onsubmit="handleSubmit(event)">
+        <div id="linkFields" class="dynamic-fields active">
+          <div class="form-group">
+            <label>Destination URL</label>
+            <input type="url" id="url" placeholder="https://example.com">
+          </div>
+        </div>
+
+        <div id="vcardFields" class="dynamic-fields">
+          <div class="form-group">
+            <label>First Name</label>
+            <input type="text" id="firstName" placeholder="John">
+          </div>
+          <div class="form-group">
+            <label>Last Name</label>
+            <input type="text" id="lastName" placeholder="Doe">
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="email" placeholder="john@example.com">
+          </div>
+          <div class="form-group">
+            <label>Phone</label>
+            <input type="tel" id="phone" placeholder="+1234567890">
+          </div>
+          <div class="form-group">
+            <label>Organization</label>
+            <input type="text" id="organization" placeholder="Company Inc.">
+          </div>
+          <div class="form-group">
+            <label>Title</label>
+            <input type="text" id="title" placeholder="Software Engineer">
+          </div>
+          <div class="form-group">
+            <label>Website</label>
+            <input type="url" id="website" placeholder="https://example.com">
+          </div>
+        </div>
+
+        <button type="submit" id="submitBtn">Create QR Code</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    let currentType = 'link';
+    let editingId = null;
+
+    async function loadQRCodes() {
+      const response = await fetch('/api/qr');
+      const codes = await response.json();
+      
+      const grid = document.getElementById('qrGrid');
+      
+      if (codes.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-state">
+            <h3>No QR codes yet</h3>
+            <p>Create your first QR code to get started</p>
+            <button onclick="openCreateModal()">+ Create QR Code</button>
+          </div>
+        `;
+        return;
+      }
+      
+      grid.innerHTML = codes.map(code => `
+        <div class="qr-card">
+          <img class="qr-image" src="${code.qrImage}" alt="QR Code">
+          <div class="qr-info">
+            <div class="qr-type">${code.type === 'link' ? 'Link' : 'Contact Card'}</div>
+            <div class="qr-data">
+              ${code.type === 'link' ? 
+                `→ ${code.data.url}` : 
+                `${code.data.firstName} ${code.data.lastName}`
+              }
+            </div>
+            <div class="qr-url">${code.qrUrl}</div>
+          </div>
+          <div class="qr-actions">
+            <button class="secondary" onclick="editQRCode(${code.id})">Edit</button>
+            <button class="secondary" onclick="downloadQR(${code.id})">Download</button>
+            <button class="danger" onclick="deleteQRCode(${code.id})">Delete</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function selectType(type) {
+      currentType = type;
+      
+      document.querySelectorAll('.type-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.type === type);
+      });
+      
+      document.querySelectorAll('.dynamic-fields').forEach(field => {
+        field.classList.remove('active');
+      });
+      
+      document.getElementById(type + 'Fields').classList.add('active');
+    }
+
+    function openCreateModal() {
+      editingId = null;
+      document.getElementById('modalTitle').textContent = 'Create QR Code';
+      document.getElementById('submitBtn').textContent = 'Create QR Code';
+      document.getElementById('qrForm').reset();
+      document.getElementById('createModal').classList.add('active');
+    }
+
+    async function editQRCode(id) {
+      const response = await fetch(`/api/qr/${id}`);
+      const code = await response.json();
+      
+      editingId = id;
+      currentType = code.type;
+      
+      selectType(code.type);
+      
+      if (code.type === 'link') {
+        document.getElementById('url').value = code.data.url;
+      } else {
+        document.getElementById('firstName').value = code.data.firstName;
+        document.getElementById('lastName').value = code.data.lastName;
+        document.getElementById('email').value = code.data.email || '';
+        document.getElementById('phone').value = code.data.phone || '';
+        document.getElementById('organization').value = code.data.organization || '';
+        document.getElementById('title').value = code.data.title || '';
+        document.getElementById('website').value = code.data.website || '';
+      }
+      
+      document.getElementById('modalTitle').textContent = 'Edit QR Code';
+      document.getElementById('submitBtn').textContent = 'Update QR Code';
+      document.getElementById('createModal').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('createModal').classList.remove('active');
+    }
+
+    async function handleSubmit(e) {
+      e.preventDefault();
+      
+      let data;
+      
+      if (currentType === 'link') {
+        data = { url: document.getElementById('url').value };
+      } else {
+        data = {
+          firstName: document.getElementById('firstName').value,
+          lastName: document.getElementById('lastName').value,
+          email: document.getElementById('email').value,
+          phone: document.getElementById('phone').value,
+          organization: document.getElementById('organization').value,
+          title: document.getElementById('title').value,
+          website: document.getElementById('website').value
+        };
+      }
+      
+      const url = editingId ? `/api/qr/${editingId}` : '/api/qr';
+      const method = editingId ? 'PUT' : 'POST';
+      
+      await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: currentType, data })
+      });
+      
+      closeModal();
+      loadQRCodes();
+    }
+
+    async function deleteQRCode(id) {
+      if (!confirm('Delete this QR code? This cannot be undone.')) return;
+      
+      await fetch(`/api/qr/${id}`, { method: 'DELETE' });
+      loadQRCodes();
+    }
+
+    async function downloadQR(id) {
+      const response = await fetch(`/api/qr/${id}/image`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `qr-code-${id}.png`;
+      a.click();
+    }
+
+    loadQRCodes();
+  </script>
+</body>
+</html>
+```
+
+---
+
+## API Endpoints
+
+### Create QR Code
+`POST /api/qr`
+```json
+{
+  "type": "link",
+  "data": { "url": "https://example.com" }
+}
+```
+
+### List All QR Codes
+`GET /api/qr`
+
+### Get Specific QR Code
+`GET /api/qr/:id`
+
+### Update QR Code
+`PUT /api/qr/:id`
+```json
+{
+  "type": "link",
+  "data": { "url": "https://newurl.com" }
+}
+```
+
+### Delete QR Code
+`DELETE /api/qr/:id`
+
+### Download QR Image
+`GET /api/qr/:id/image`
+
+### Public Redirect
+`GET /q/:shortId`
+
+---
+
+## Database Schema
+
+```sql
+CREATE TABLE qr_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  short_id TEXT UNIQUE NOT NULL,
+  type TEXT NOT NULL,
+  data TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+---
+
+## Production Deployment
+
+1. Set environment variable:
+```bash
+export BASE_URL=https://yourdomain.com
+```
+
+2. Use PM2 for process management:
+```bash
+npm install -g pm2
+pm2 start server.js --name qr-manager
+pm2 save
+pm2 startup
+```
+
+3. Configure reverse proxy (nginx example):
+```nginx
+server {
+    listen 80;
+    server_name yourdomain.com;
+    
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+---
+
+## How It Works
+
+1. User creates a QR code (link or vCard)
+2. System generates unique short ID using nanoid
+3. QR code contains URL: `https://yourdomain.com/q/abc123`
+4. When scanned:
+   - System looks up `abc123` in database
+   - **Links**: HTTP 302 redirect to stored URL
+   - **vCards**: Serve `.vcf` file with contact info
+5. User can edit stored data anytime via web interface
+6. QR code remains unchanged, destination updates instantly
+
+---
+
+## Data Models
+
+### Link QR Code
+```json
+{
+  "type": "link",
+  "data": {
+    "url": "https://example.com"
+  }
+}
+```
+
+### vCard QR Code
+```json
+{
+  "type": "vcard",
+  "data": {
+    "firstName": "John",
+    "lastName": "Doe",
+    "email": "john@example.com",
+    "phone": "+1234567890",
+    "organization": "Company Inc.",
+    "title": "Software Engineer",
+    "website": "https://example.com"
+  }
+}
+```
+
+---
+
+## Security Considerations
+
+- Add authentication for production use
+- Implement rate limiting on QR creation
+- Validate URLs to prevent open redirect vulnerabilities
+- Sanitize vCard data before generating files
+- Use HTTPS in production
+- Add CSRF protection for state-changing operations
+
+---
+
+## Future Enhancements
+
+- Analytics (scan tracking)
+- QR code expiration dates
+- Custom QR code designs/colors
+- Bulk QR code generation
+- API authentication with API keys
+- Support for WiFi credentials, SMS, geo-locations
+- QR code templates
