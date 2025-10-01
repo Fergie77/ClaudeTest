@@ -39,6 +39,50 @@
         color: #666;
       }
 
+      .api-key-section {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 6px;
+        padding: 15px;
+        margin-bottom: 20px;
+      }
+
+      .api-key-section h3 {
+        color: #856404;
+        margin-bottom: 10px;
+      }
+
+      .api-key-input {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .api-key-input input {
+        flex: 1;
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+
+      .api-key-status {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+
+      .api-key-status.valid {
+        background: #d4edda;
+        color: #155724;
+      }
+
+      .api-key-status.invalid {
+        background: #f8d7da;
+        color: #721c24;
+      }
+
       .actions {
         margin-bottom: 20px;
       }
@@ -56,6 +100,11 @@
 
       button:hover {
         background: #0056b3;
+      }
+
+      button:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
       }
 
       button.secondary {
@@ -247,6 +296,19 @@
         margin-top: 8px;
         word-break: break-all;
       }
+
+      .error-message {
+        background: #f8d7da;
+        color: #721c24;
+        padding: 10px;
+        border-radius: 4px;
+        margin-bottom: 15px;
+        display: none;
+      }
+
+      .error-message.show {
+        display: block;
+      }
     </style>
   </head>
   <body>
@@ -258,10 +320,24 @@
         </p>
       </header>
 
-      <div class="actions">
-        <button onclick="openCreateModal()">+ Create QR Code</button>
-        <button class="danger" onclick="clearAllQRCodes()" id="clearAllBtn" style="display: none;">🗑️ Clear All</button>
+      <div class="api-key-section">
+        <h3>🔑 API Authentication Required</h3>
+        <div class="api-key-input">
+          <input type="password" id="apiKeyInput" placeholder="Enter your API key..." />
+          <button id="setApiKeyBtn">Set API Key</button>
+          <span id="apiKeyStatus" class="api-key-status">Not Set</span>
+        </div>
+        <p style="margin-top: 10px; font-size: 12px; color: #856404;">
+          Contact your administrator to get an API key for accessing this service.
+        </p>
       </div>
+
+      <div class="actions">
+        <button id="createBtn" disabled>+ Create QR Code</button>
+        <button class="danger" id="clearAllBtn" style="display: none;" disabled>🗑️ Clear All</button>
+      </div>
+
+      <div id="errorMessage" class="error-message"></div>
 
       <div id="qrGrid" class="qr-grid"></div>
     </div>
@@ -270,42 +346,34 @@
       <div class="modal-content">
         <div class="modal-header">
           <h2 id="modalTitle">Create QR Code</h2>
-          <button class="close" onclick="closeModal()">&times;</button>
+          <button class="close" id="closeModalBtn">&times;</button>
         </div>
 
         <div class="type-selector">
-          <button
-            class="type-btn active"
-            data-type="link"
-            onclick="selectType('link')"
-          >
+          <button class="type-btn active" data-type="link" id="linkTypeBtn">
             Link
           </button>
-          <button
-            class="type-btn"
-            data-type="vcard"
-            onclick="selectType('vcard')"
-          >
+          <button class="type-btn" data-type="vcard" id="vcardTypeBtn">
             Contact Card
           </button>
         </div>
 
-        <form id="qrForm" onsubmit="handleSubmit(event)">
+        <form id="qrForm">
           <div id="linkFields" class="dynamic-fields active">
             <div class="form-group">
               <label>Destination URL</label>
-              <input type="url" id="url" placeholder="https://example.com" />
+              <input type="url" id="url" placeholder="https://example.com" required />
             </div>
           </div>
 
           <div id="vcardFields" class="dynamic-fields">
             <div class="form-group">
               <label>First Name</label>
-              <input type="text" id="firstName" placeholder="John" />
+              <input type="text" id="firstName" placeholder="John" required />
             </div>
             <div class="form-group">
               <label>Last Name</label>
-              <input type="text" id="lastName" placeholder="Doe" />
+              <input type="text" id="lastName" placeholder="Doe" required />
             </div>
             <div class="form-group">
               <label>Email</label>
@@ -325,11 +393,7 @@
             </div>
             <div class="form-group">
               <label>Website</label>
-              <input
-                type="url"
-                id="website"
-                placeholder="https://example.com"
-              />
+              <input type="url" id="website" placeholder="https://example.com" />
             </div>
           </div>
 
@@ -341,9 +405,118 @@
     <script>
       let currentType = 'link'
       let editingId = null
+      let apiKey = localStorage.getItem('qr_api_key') || ''
+
+      // Initialize API key status
+      if (apiKey) {
+        document.getElementById('apiKeyInput').value = apiKey
+        updateApiKeyStatus(true)
+      }
+
+      // Event listeners (CSP-compliant)
+      document.addEventListener('DOMContentLoaded', function() {
+        // API Key button
+        document.getElementById('setApiKeyBtn').addEventListener('click', setApiKey)
+        
+        // Main action buttons
+        document.getElementById('createBtn').addEventListener('click', openCreateModal)
+        document.getElementById('clearAllBtn').addEventListener('click', clearAllQRCodes)
+        
+        // Modal controls
+        document.getElementById('closeModalBtn').addEventListener('click', closeModal)
+        
+        // Type selector buttons
+        document.getElementById('linkTypeBtn').addEventListener('click', () => selectType('link'))
+        document.getElementById('vcardTypeBtn').addEventListener('click', () => selectType('vcard'))
+        
+        // Form submission
+        document.getElementById('qrForm').addEventListener('submit', handleSubmit)
+        
+        // Load QR codes on page load if API key is available
+        if (apiKey) {
+          loadQRCodes()
+        }
+      })
+
+      function setApiKey() {
+        const input = document.getElementById('apiKeyInput')
+        const key = input.value.trim()
+        
+        if (key) {
+          apiKey = key
+          localStorage.setItem('qr_api_key', key)
+          updateApiKeyStatus(true)
+          loadQRCodes() // Try to load QR codes with new key
+        } else {
+          updateApiKeyStatus(false)
+        }
+      }
+
+      function updateApiKeyStatus(isValid) {
+        const status = document.getElementById('apiKeyStatus')
+        const createBtn = document.getElementById('createBtn')
+        
+        if (isValid) {
+          status.textContent = 'Valid'
+          status.className = 'api-key-status valid'
+          createBtn.disabled = false
+        } else {
+          status.textContent = 'Invalid'
+          status.className = 'api-key-status invalid'
+          createBtn.disabled = true
+        }
+      }
+
+      function showError(message) {
+        const errorDiv = document.getElementById('errorMessage')
+        errorDiv.textContent = message
+        errorDiv.classList.add('show')
+        setTimeout(() => {
+          errorDiv.classList.remove('show')
+        }, 5000)
+      }
+
+      async function makeAuthenticatedRequest(url, options = {}) {
+        if (!apiKey) {
+          showError('API key is required. Please set your API key first.')
+          return null
+        }
+
+        const headers = {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+          ...options.headers
+        }
+
+        try {
+          const response = await fetch(url, {
+            ...options,
+            headers
+          })
+
+          if (response.status === 401) {
+            showError('Invalid API key. Please check your API key and try again.')
+            updateApiKeyStatus(false)
+            return null
+          }
+
+          if (!response.ok) {
+            const errorData = await response.json()
+            showError(errorData.error || 'Request failed')
+            return null
+          }
+
+          return response
+        } catch (error) {
+          showError('Network error: ' + error.message)
+          return null
+        }
+      }
 
       async function loadQRCodes() {
-        const response = await fetch('/api/qr')
+        const response = await makeAuthenticatedRequest('/api/qr')
+        if (!response) return
+
         const codes = await response.json()
 
         const grid = document.getElementById('qrGrid')
@@ -354,15 +527,21 @@
           <div class="empty-state">
             <h3>No QR codes yet</h3>
             <p>Create your first QR code to get started</p>
-            <button onclick="openCreateModal()">+ Create QR Code</button>
+            <button id="emptyCreateBtn" ${!apiKey ? 'disabled' : ''}>+ Create QR Code</button>
           </div>
         `
+          // Add event listener to empty state button
+          const emptyCreateBtn = document.getElementById('emptyCreateBtn')
+          if (emptyCreateBtn) {
+            emptyCreateBtn.addEventListener('click', openCreateModal)
+          }
           clearAllBtn.style.display = 'none'
           return
         }
 
         // Show clear all button when there are QR codes
         clearAllBtn.style.display = 'inline-block'
+        clearAllBtn.disabled = !apiKey
 
         grid.innerHTML = codes
           .map(
@@ -383,14 +562,25 @@
             <div class="qr-url">${code.qrUrl}</div>
           </div>
           <div class="qr-actions">
-            <button class="secondary" onclick="editQRCode(${code.id})">Edit</button>
-            <button class="secondary" onclick="downloadQR(${code.id})">Download</button>
-            <button class="danger" onclick="deleteQRCode(${code.id})">Delete</button>
+            <button class="secondary edit-btn" data-id="${code.id}" ${!apiKey ? 'disabled' : ''}>Edit</button>
+            <button class="secondary download-btn" data-id="${code.id}" ${!apiKey ? 'disabled' : ''}>Download</button>
+            <button class="danger delete-btn" data-id="${code.id}" ${!apiKey ? 'disabled' : ''}>Delete</button>
           </div>
         </div>
       `
           )
           .join('')
+
+        // Add event listeners to dynamically created buttons
+        document.querySelectorAll('.edit-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => editQRCode(e.target.dataset.id))
+        })
+        document.querySelectorAll('.download-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => downloadQR(e.target.dataset.id))
+        })
+        document.querySelectorAll('.delete-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => deleteQRCode(e.target.dataset.id))
+        })
       }
 
       function selectType(type) {
@@ -408,6 +598,11 @@
       }
 
       function openCreateModal() {
+        if (!apiKey) {
+          showError('Please set your API key first')
+          return
+        }
+        
         editingId = null
         document.getElementById('modalTitle').textContent = 'Create QR Code'
         document.getElementById('submitBtn').textContent = 'Create QR Code'
@@ -416,7 +611,14 @@
       }
 
       async function editQRCode(id) {
-        const response = await fetch(`/api/qr/${id}`)
+        if (!apiKey) {
+          showError('Please set your API key first')
+          return
+        }
+
+        const response = await makeAuthenticatedRequest(`/api/qr/${id}`)
+        if (!response) return
+
         const code = await response.json()
 
         editingId = id
@@ -449,6 +651,11 @@
       async function handleSubmit(e) {
         e.preventDefault()
 
+        if (!apiKey) {
+          showError('Please set your API key first')
+          return
+        }
+
         let data
 
         if (currentType === 'link') {
@@ -468,25 +675,40 @@
         const url = editingId ? `/api/qr/${editingId}` : '/api/qr'
         const method = editingId ? 'PUT' : 'POST'
 
-        await fetch(url, {
+        const response = await makeAuthenticatedRequest(url, {
           method,
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ type: currentType, data }),
         })
 
-        closeModal()
-        loadQRCodes()
+        if (response) {
+          closeModal()
+          loadQRCodes()
+        }
       }
 
       async function deleteQRCode(id) {
+        if (!apiKey) {
+          showError('Please set your API key first')
+          return
+        }
+
         if (!confirm('Delete this QR code? This cannot be undone.')) return
 
-        await fetch(`/api/qr/${id}`, { method: 'DELETE' })
-        loadQRCodes()
+        const response = await makeAuthenticatedRequest(`/api/qr/${id}`, { method: 'DELETE' })
+        if (response) {
+          loadQRCodes()
+        }
       }
 
       async function downloadQR(id) {
-        const response = await fetch(`/api/qr/${id}/image`)
+        if (!apiKey) {
+          showError('Please set your API key first')
+          return
+        }
+
+        const response = await makeAuthenticatedRequest(`/api/qr/${id}/image`)
+        if (!response) return
+
         const blob = await response.blob()
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
@@ -496,18 +718,18 @@
       }
 
       async function clearAllQRCodes() {
+        if (!apiKey) {
+          showError('Please set your API key first')
+          return
+        }
+
         if (!confirm("Are you sure you want to delete ALL QR codes? This cannot be undone.")) return
         
-        try {
-          await fetch("/api/qr/clear-all", { method: "DELETE" })
+        const response = await makeAuthenticatedRequest("/api/qr/clear-all", { method: "DELETE" })
+        if (response) {
           loadQRCodes()
-        } catch (error) {
-          console.error("Error clearing QR codes:", error)
-          alert("Failed to clear QR codes. Please try again.")
         }
       }
-
-      loadQRCodes()
     </script>
   </body>
 </html>
