@@ -22,8 +22,8 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"], // Allow inline scripts for our landing pages
-      scriptSrcAttr: ["'unsafe-inline'"], // Allow inline event handlers
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
       imgSrc: ["'self'", "data:"],
       connectSrc: ["'self'"],
       fontSrc: ["'self'"],
@@ -32,11 +32,6 @@ app.use(helmet({
       frameSrc: ["'none'"],
     },
   },
-  hsts: {
-    maxAge: 31536000,
-    includeSubDomains: true,
-    preload: true
-  }
 }));
 
 // Rate limiting
@@ -729,4 +724,3 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`BASE_URL: ${process.env.BASE_URL || 'not set'}`);
   console.log(`CUSTOM_SHORT_DOMAIN: ${process.env.CUSTOM_SHORT_DOMAIN || 'not set'}`);
 });
-// Force redeploy
