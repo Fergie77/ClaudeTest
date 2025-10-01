@@ -1,3 +1,4 @@
+// Force redeploy - nonce-based CSP fix
 import dotenv from 'dotenv';
 dotenv.config();
 import express from 'express';
