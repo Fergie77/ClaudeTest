@@ -52,19 +52,12 @@ app.post('/api/qr', async (req, res) => {
     
     qrCodes.push(newCode);
     
-    // Option 1: Use custom domain if set
-    // Option 2: Use URL shortener service
-    // Option 3: Use current domain but with custom path
-    
-    const baseUrl = getBaseUrl(req);
+    // Use custom short domain if set, otherwise use current domain
     let qrUrl;
-    
-    // Check if we should use a custom short URL
     if (process.env.CUSTOM_SHORT_DOMAIN) {
-      // Use custom short domain (e.g., bit.ly, tinyurl.com, or your own domain)
       qrUrl = `${process.env.CUSTOM_SHORT_DOMAIN}/${shortId}`;
     } else {
-      // Use current domain
+      const baseUrl = getBaseUrl(req);
       qrUrl = `${baseUrl}/q/${shortId}`;
     }
     
@@ -83,13 +76,12 @@ app.post('/api/qr', async (req, res) => {
 
 app.get('/api/qr', async (req, res) => {
   try {
-    const baseUrl = getBaseUrl(req);
     const codesWithImages = await Promise.all(qrCodes.map(async (code) => {
       let qrUrl;
-      
       if (process.env.CUSTOM_SHORT_DOMAIN) {
         qrUrl = `${process.env.CUSTOM_SHORT_DOMAIN}/${code.shortId}`;
       } else {
+        const baseUrl = getBaseUrl(req);
         qrUrl = `${baseUrl}/q/${code.shortId}`;
       }
       
@@ -118,12 +110,11 @@ app.get('/api/qr/:id', async (req, res) => {
       return res.status(404).json({ error: 'QR code not found' });
     }
     
-    const baseUrl = getBaseUrl(req);
     let qrUrl;
-    
     if (process.env.CUSTOM_SHORT_DOMAIN) {
       qrUrl = `${process.env.CUSTOM_SHORT_DOMAIN}/${code.shortId}`;
     } else {
+      const baseUrl = getBaseUrl(req);
       qrUrl = `${baseUrl}/q/${code.shortId}`;
     }
     
@@ -192,12 +183,11 @@ app.get('/api/qr/:id/image', async (req, res) => {
       return res.status(404).send('Not found');
     }
     
-    const baseUrl = getBaseUrl(req);
     let qrUrl;
-    
     if (process.env.CUSTOM_SHORT_DOMAIN) {
       qrUrl = `${process.env.CUSTOM_SHORT_DOMAIN}/${code.shortId}`;
     } else {
+      const baseUrl = getBaseUrl(req);
       qrUrl = `${baseUrl}/q/${code.shortId}`;
     }
     
@@ -210,7 +200,11 @@ app.get('/api/qr/:id/image', async (req, res) => {
   }
 });
 
-app.get('/q/:shortId', (req, res) => {
+// Handle QR redirects - support both /q/:shortId and direct /:shortId for custom domains
+app.get('/q/:shortId', handleQRRedirect);
+app.get('/:shortId', handleQRRedirect);
+
+function handleQRRedirect(req, res) {
   try {
     const shortId = req.params.shortId;
     const code = qrCodes.find(c => c.shortId === shortId);
@@ -452,7 +446,7 @@ app.get('/q/:shortId', (req, res) => {
     console.error('Error processing QR redirect:', error);
     res.status(500).send('Error processing QR code');
   }
-});
+}
 
 // Handle vCard downloads
 app.get('/download/:shortId', (req, res) => {
