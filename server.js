@@ -9,6 +9,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import validator from 'validator';
 import { createClient } from '@supabase/supabase-js';
+import { body, validationResult } from 'express-validator';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,37 +27,46 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const app = express();
 
-// Security middleware with adjusted CSP for inline scripts
+// Enhanced security middleware with stricter CSP
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"], // Still needed for inline styles
+      scriptSrc: ["'self'"], // Removed 'unsafe-inline' for better security
+      scriptSrcAttr: ["'none'"], // Block inline event handlers
       imgSrc: ["'self'", "data:"],
       connectSrc: ["'self'"],
       fontSrc: ["'self'"],
       objectSrc: ["'none'"],
       mediaSrc: ["'self'"],
       frameSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
     },
   },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
 }));
 
-// Rate limiting
+// Enhanced rate limiting with stricter production limits
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === "production" ? 200 : 1000, // Environment-aware rate limiting
-  message: 'Too many requests from this IP, please try again later.',
+  max: process.env.NODE_ENV === "production" ? 100 : 500, // Stricter limits
+  message: { error: 'Too many requests from this IP, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  skipFailedRequests: false,
 });
 
 const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === "production" ? 50 : 200, // Environment-aware API rate limiting
-  message: 'Too many API requests from this IP, please try again later.',
+  max: process.env.NODE_ENV === "production" ? 20 : 100, // Much stricter API limits
+  message: { error: 'Too many API requests from this IP, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -65,21 +75,169 @@ app.use(limiter);
 app.use('/api', strictLimiter);
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: '1mb' })); // Limit request size
 app.use(express.static(join(__dirname, 'public')));
 
-// Health check endpoint
+// API Key Authentication Middleware
+const authenticateAPIKey = (req, res, next) => {
+  const apiKey = req.headers['x-api-key'] || req.query.api_key;
+  const validApiKey = process.env.API_KEY;
+  
+  if (!validApiKey) {
+    return res.status(500).json({ error: 'API authentication not configured' });
+  }
+  
+  if (!apiKey || apiKey !== validApiKey) {
+    return res.status(401).json({ error: 'Invalid or missing API key' });
+  }
+  
+  next();
+};
+
+// Enhanced URL validation function
+function validateUrl(url) {
+  if (!url || typeof url !== 'string') {
+    throw new Error('URL is required and must be a string');
+  }
+  
+  // Block dangerous protocols and schemes
+  const dangerousPatterns = [
+    /^javascript:/i,
+    /^data:/i,
+    /^vbscript:/i,
+    /^file:/i,
+    /^ftp:/i,
+    /^mailto:/i,
+    /^tel:/i,
+    /^sms:/i,
+    /^chrome:/i,
+    /^chrome-extension:/i,
+    /^moz-extension:/i,
+    /^about:/i,
+    /^blob:/i,
+    /^ws:/i,
+    /^wss:/i,
+    /^gopher:/i,
+    /^ldap:/i,
+    /^ldaps:/i
+  ];
+  
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(url.trim())) {
+      throw new Error('Dangerous URL scheme not allowed');
+    }
+  }
+  
+  // Check if it's a valid HTTP/HTTPS URL
+  if (!validator.isURL(url, { 
+    protocols: ['http', 'https'],
+    require_protocol: true,
+    require_valid_protocol: true,
+    allow_underscores: false,
+    allow_trailing_dot: false,
+    allow_protocol_relative_urls: false
+  })) {
+    throw new Error('Invalid URL format - only HTTP and HTTPS URLs are allowed');
+  }
+  
+  // Additional security checks
+  const parsed = new URL(url);
+  
+  // Block localhost/private IPs in production
+  if (process.env.NODE_ENV === 'production') {
+    if (parsed.hostname === 'localhost' || 
+        parsed.hostname.startsWith('127.') ||
+        parsed.hostname.startsWith('192.168.') ||
+        parsed.hostname.startsWith('10.') ||
+        parsed.hostname.startsWith('172.') ||
+        parsed.hostname === '0.0.0.0') {
+      throw new Error('Local/private URLs are not allowed in production');
+    }
+  }
+  
+  // Block suspicious patterns
+  if (parsed.hostname.includes('..') || 
+      parsed.hostname.includes('@') ||
+      parsed.hostname.includes('#')) {
+    throw new Error('Suspicious URL patterns detected');
+  }
+  
+  return url.trim();
+}
+
+// Enhanced vCard validation
+function validateVCardData(data) {
+  const required = ['firstName', 'lastName'];
+  const allowed = ['firstName', 'lastName', 'email', 'phone', 'organization', 'title', 'website'];
+  
+  // Check required fields
+  for (const field of required) {
+    if (!data[field] || typeof data[field] !== 'string' || data[field].trim().length === 0) {
+      throw new Error(`${field} is required`);
+    }
+  }
+  
+  // Validate email if provided
+  if (data.email && !validator.isEmail(data.email)) {
+    throw new Error('Invalid email format');
+  }
+  
+  // Validate phone if provided
+  if (data.phone && !validator.isMobilePhone(data.phone)) {
+    throw new Error('Invalid phone format');
+  }
+  
+  // Validate website if provided
+  if (data.website) {
+    try {
+      validateUrl(data.website);
+    } catch (error) {
+      throw new Error('Invalid website URL');
+    }
+  }
+  
+  // Sanitize and validate all string fields
+  const sanitized = {};
+  for (const field of allowed) {
+    if (data[field]) {
+      // Escape HTML and limit length
+      const sanitizedValue = validator.escape(data[field].trim());
+      if (sanitizedValue.length > 100) {
+        throw new Error(`${field} is too long (max 100 characters)`);
+      }
+      sanitized[field] = sanitizedValue;
+    }
+  }
+  
+  return sanitized;
+}
+
+// Validation middleware
+const validateQRCode = [
+  body('type').isIn(['link', 'vcard']).withMessage('Type must be either link or vcard'),
+  body('data').isObject().withMessage('Data must be an object'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+    }
+    next();
+  }
+];
+
+// Health check endpoint (no auth required)
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    supabase: 'connected'
+    supabase: 'connected',
+    version: '2.0.0-secure'
   });
 });
 
-// Get all QR codes
-app.get('/api/qr', async (req, res) => {
+// Get all QR codes (requires API key)
+app.get('/api/qr', authenticateAPIKey, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('qr_codes')
@@ -119,8 +277,8 @@ app.get('/api/qr', async (req, res) => {
   }
 });
 
-// Get specific QR code
-app.get('/api/qr/:id', async (req, res) => {
+// Get specific QR code (requires API key)
+app.get('/api/qr/:id', authenticateAPIKey, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('qr_codes')
@@ -157,22 +315,28 @@ app.get('/api/qr/:id', async (req, res) => {
   }
 });
 
-// Create new QR code
-app.post('/api/qr', async (req, res) => {
+// Create new QR code (requires API key + validation)
+app.post('/api/qr', authenticateAPIKey, validateQRCode, async (req, res) => {
   try {
     const { type, data } = req.body;
 
-    if (!type || !data) {
-      return res.status(400).json({ error: 'Type and data are required' });
-    }
-
-    // Validate based on type
-    if (type === 'link' && !validator.isURL(data.url)) {
-      return res.status(400).json({ error: 'Invalid URL' });
-    }
-
-    if (type === 'vcard' && (!data.firstName || !data.lastName)) {
-      return res.status(400).json({ error: 'First name and last name are required for contact cards' });
+    // Enhanced validation based on type
+    if (type === 'link') {
+      if (!data.url) {
+        return res.status(400).json({ error: 'URL is required for link type' });
+      }
+      try {
+        validateUrl(data.url);
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
+    } else if (type === 'vcard') {
+      try {
+        const sanitizedData = validateVCardData(data);
+        req.body.data = sanitizedData; // Update with sanitized data
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
     }
 
     const shortId = nanoid(8);
@@ -183,7 +347,7 @@ app.post('/api/qr', async (req, res) => {
       .insert({
         short_id: shortId,
         type,
-        data
+        data: req.body.data
       })
       .select()
       .single();
@@ -217,22 +381,28 @@ app.post('/api/qr', async (req, res) => {
   }
 });
 
-// Update QR code
-app.put('/api/qr/:id', async (req, res) => {
+// Update QR code (requires API key + validation)
+app.put('/api/qr/:id', authenticateAPIKey, validateQRCode, async (req, res) => {
   try {
     const { type, data } = req.body;
 
-    if (!type || !data) {
-      return res.status(400).json({ error: 'Type and data are required' });
-    }
-
-    // Validate based on type
-    if (type === 'link' && !validator.isURL(data.url)) {
-      return res.status(400).json({ error: 'Invalid URL' });
-    }
-
-    if (type === 'vcard' && (!data.firstName || !data.lastName)) {
-      return res.status(400).json({ error: 'First name and last name are required for contact cards' });
+    // Enhanced validation based on type
+    if (type === 'link') {
+      if (!data.url) {
+        return res.status(400).json({ error: 'URL is required for link type' });
+      }
+      try {
+        validateUrl(data.url);
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
+    } else if (type === 'vcard') {
+      try {
+        const sanitizedData = validateVCardData(data);
+        req.body.data = sanitizedData; // Update with sanitized data
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
     }
 
     // Update in Supabase
@@ -240,7 +410,7 @@ app.put('/api/qr/:id', async (req, res) => {
       .from('qr_codes')
       .update({
         type,
-        data,
+        data: req.body.data,
         updated_at: new Date().toISOString()
       })
       .eq('id', req.params.id)
@@ -276,8 +446,8 @@ app.put('/api/qr/:id', async (req, res) => {
   }
 });
 
-// Delete QR code
-app.delete('/api/qr/:id', async (req, res) => {
+// Delete QR code (requires API key)
+app.delete('/api/qr/:id', authenticateAPIKey, async (req, res) => {
   try {
     const { error } = await supabase
       .from('qr_codes')
@@ -296,8 +466,8 @@ app.delete('/api/qr/:id', async (req, res) => {
   }
 });
 
-// Clear all QR codes
-app.delete('/api/qr/clear-all', async (req, res) => {
+// Clear all QR codes (requires API key)
+app.delete('/api/qr/clear-all', authenticateAPIKey, async (req, res) => {
   try {
     const { error } = await supabase
       .from('qr_codes')
@@ -316,8 +486,8 @@ app.delete('/api/qr/clear-all', async (req, res) => {
   }
 });
 
-// Get QR code image for download
-app.get('/api/qr/:id/image', async (req, res) => {
+// Get QR code image for download (requires API key)
+app.get('/api/qr/:id/image', authenticateAPIKey, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('qr_codes')
@@ -355,7 +525,7 @@ app.get('/api/qr/:id/image', async (req, res) => {
   }
 });
 
-// QR code redirect endpoint
+// QR code redirect endpoint (public - no auth required)
 app.get('/q/:shortId', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -386,21 +556,22 @@ app.get('/q/:shortId', async (req, res) => {
     if (data.type === 'link') {
       res.redirect(data.data.url);
     } else if (data.type === 'vcard') {
-      // Generate vCard content
+      // Generate vCard content with sanitized data
+      const sanitizedData = data.data;
       const vcard = `BEGIN:VCARD
 VERSION:3.0
-FN:${data.data.firstName} ${data.data.lastName}
-N:${data.data.lastName};${data.data.firstName};;;
-${data.data.email ? `EMAIL:${data.data.email}` : ''}
-${data.data.phone ? `TEL:${data.data.phone}` : ''}
-${data.data.organization ? `ORG:${data.data.organization}` : ''}
-${data.data.title ? `TITLE:${data.data.title}` : ''}
-${data.data.website ? `URL:${data.data.website}` : ''}
+FN:${sanitizedData.firstName} ${sanitizedData.lastName}
+N:${sanitizedData.lastName};${sanitizedData.firstName};;;
+${sanitizedData.email ? `EMAIL:${sanitizedData.email}` : ''}
+${sanitizedData.phone ? `TEL:${sanitizedData.phone}` : ''}
+${sanitizedData.organization ? `ORG:${sanitizedData.organization}` : ''}
+${sanitizedData.title ? `TITLE:${sanitizedData.title}` : ''}
+${sanitizedData.website ? `URL:${sanitizedData.website}` : ''}
 END:VCARD`;
 
       res.set({
         'Content-Type': 'text/vcard',
-        'Content-Disposition': `attachment; filename="${data.data.firstName}-${data.data.lastName}.vcf"`
+        'Content-Disposition': `attachment; filename="${sanitizedData.firstName}-${sanitizedData.lastName}.vcf"`
       });
 
       res.send(vcard);
@@ -417,7 +588,7 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Rate limits: ${process.env.NODE_ENV === 'production' ? 'Production (strict)' : 'Development (lenient)'}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`API Authentication: ${process.env.API_KEY ? 'Enabled' : 'Disabled'}`);
   console.log(`BASE_URL: ${process.env.BASE_URL || 'not set'}`);
   console.log(`CUSTOM_SHORT_DOMAIN: ${process.env.CUSTOM_SHORT_DOMAIN || 'not set'}`);
 });
