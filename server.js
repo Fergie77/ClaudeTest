@@ -728,3 +728,4 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`BASE_URL: ${process.env.BASE_URL || 'not set'}`);
   console.log(`CUSTOM_SHORT_DOMAIN: ${process.env.CUSTOM_SHORT_DOMAIN || 'not set'}`);
 });
+// Force redeploy Wed Oct  1 14:51:33 BST 2025
