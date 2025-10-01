@@ -185,13 +185,233 @@ app.get('/q/:shortId', (req, res) => {
     }
     
     if (code.type === 'link') {
-      // Show custom landing page with redirect
-      const redirectUrl = `/redirect.html?url=${encodeURIComponent(code.data.url)}&type=link`;
-      res.redirect(redirectUrl);
+      // Show custom HTML page with redirect
+      const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome!</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            width: 90%;
+        }
+        .logo {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+        }
+        .message {
+            font-size: 1.1rem;
+            margin-bottom: 1.5rem;
+            opacity: 0.9;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .countdown {
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+        .manual-link {
+            margin-top: 1.5rem;
+            padding: 0.8rem 1.5rem;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            color: white;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.3s ease;
+        }
+        .manual-link:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🎯 Too Gallus</div>
+        <div class="message">Welcome! Taking you to your destination...</div>
+        <div class="spinner"></div>
+        <div class="countdown">Redirecting in <span id="timer">3</span> seconds</div>
+        <a href="${code.data.url}" id="manualLink" class="manual-link" style="display: none;">Click here if not redirected</a>
+    </div>
+
+    <script>
+        let countdown = 3;
+        const timerElement = document.getElementById('timer');
+        const manualLinkElement = document.getElementById('manualLink');
+        
+        const countdownInterval = setInterval(() => {
+            countdown--;
+            timerElement.textContent = countdown;
+            
+            if (countdown <= 0) {
+                clearInterval(countdownInterval);
+                window.location.href = '${code.data.url}';
+            }
+        }, 1000);
+        
+        // Show manual link after 1 second
+        setTimeout(() => {
+            manualLinkElement.style.display = 'inline-block';
+        }, 1000);
+        
+        // Auto-redirect after 5 seconds regardless
+        setTimeout(() => {
+            window.location.href = '${code.data.url}';
+        }, 5000);
+    </script>
+</body>
+</html>`;
+      
+      res.send(html);
     } else if (code.type === 'vcard') {
       // For vCards, show landing page then download
-      const redirectUrl = `/redirect.html?url=${encodeURIComponent(`/download/${shortId}`)}&type=vcard`;
-      res.redirect(redirectUrl);
+      const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contact Card</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            width: 90%;
+        }
+        .logo {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+        }
+        .message {
+            font-size: 1.1rem;
+            margin-bottom: 1.5rem;
+            opacity: 0.9;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .countdown {
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+        .manual-link {
+            margin-top: 1.5rem;
+            padding: 0.8rem 1.5rem;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            color: white;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.3s ease;
+        }
+        .manual-link:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🎯 Too Gallus</div>
+        <div class="message">Preparing your contact card...</div>
+        <div class="spinner"></div>
+        <div class="countdown">Download starting in <span id="timer">3</span> seconds</div>
+        <a href="/download/${shortId}" id="manualLink" class="manual-link" style="display: none;">Click here to download contact card</a>
+    </div>
+
+    <script>
+        let countdown = 3;
+        const timerElement = document.getElementById('timer');
+        const manualLinkElement = document.getElementById('manualLink');
+        
+        const countdownInterval = setInterval(() => {
+            countdown--;
+            timerElement.textContent = countdown;
+            
+            if (countdown <= 0) {
+                clearInterval(countdownInterval);
+                window.location.href = '/download/${shortId}';
+            }
+        }, 1000);
+        
+        // Show manual link after 1 second
+        setTimeout(() => {
+            manualLinkElement.style.display = 'inline-block';
+        }, 1000);
+        
+        // Auto-redirect after 5 seconds regardless
+        setTimeout(() => {
+            window.location.href = '/download/${shortId}';
+        }, 5000);
+    </script>
+</body>
+</html>`;
+      
+      res.send(html);
     }
   } catch (error) {
     console.error('Error processing QR redirect:', error);
@@ -244,4 +464,3 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`BASE_URL: ${process.env.BASE_URL || 'not set'}`);
 });
-// Force redeploy Wed Oct  1 11:49:38 BST 2025
