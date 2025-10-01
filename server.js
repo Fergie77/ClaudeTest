@@ -180,6 +180,17 @@ function escapeHtml(text) {
     .replace(/\//g, '&#x2F;');
 }
 
+// JavaScript escaping function for URLs in script contexts
+function escapeJsString(str) {
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+}
+
 // Health check endpoint for Render (no sensitive info)
 app.get('/health', (req, res) => {
   res.json({ 
@@ -514,7 +525,7 @@ function handleQRRedirect(req, res) {
         let countdown = 3;
         const timerElement = document.getElementById('timer');
         const manualLinkElement = document.getElementById('manualLink');
-        const safeUrl = '${escapeHtml(safeUrl)}';
+        const safeUrl = '${escapeJsString(safeUrl)}';
         
         const countdownInterval = setInterval(() => {
             countdown--;
