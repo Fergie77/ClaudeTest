@@ -324,7 +324,7 @@
         <h3>🔑 API Authentication Required</h3>
         <div class="api-key-input">
           <input type="password" id="apiKeyInput" placeholder="Enter your API key..." />
-          <button onclick="setApiKey()">Set API Key</button>
+          <button id="setApiKeyBtn">Set API Key</button>
           <span id="apiKeyStatus" class="api-key-status">Not Set</span>
         </div>
         <p style="margin-top: 10px; font-size: 12px; color: #856404;">
@@ -333,8 +333,8 @@
       </div>
 
       <div class="actions">
-        <button onclick="openCreateModal()" id="createBtn" disabled>+ Create QR Code</button>
-        <button class="danger" onclick="clearAllQRCodes()" id="clearAllBtn" style="display: none;" disabled>🗑️ Clear All</button>
+        <button id="createBtn" disabled>+ Create QR Code</button>
+        <button class="danger" id="clearAllBtn" style="display: none;" disabled>🗑️ Clear All</button>
       </div>
 
       <div id="errorMessage" class="error-message"></div>
@@ -346,27 +346,19 @@
       <div class="modal-content">
         <div class="modal-header">
           <h2 id="modalTitle">Create QR Code</h2>
-          <button class="close" onclick="closeModal()">&times;</button>
+          <button class="close" id="closeModalBtn">&times;</button>
         </div>
 
         <div class="type-selector">
-          <button
-            class="type-btn active"
-            data-type="link"
-            onclick="selectType('link')"
-          >
+          <button class="type-btn active" data-type="link" id="linkTypeBtn">
             Link
           </button>
-          <button
-            class="type-btn"
-            data-type="vcard"
-            onclick="selectType('vcard')"
-          >
+          <button class="type-btn" data-type="vcard" id="vcardTypeBtn">
             Contact Card
           </button>
         </div>
 
-        <form id="qrForm" onsubmit="handleSubmit(event)">
+        <form id="qrForm">
           <div id="linkFields" class="dynamic-fields active">
             <div class="form-group">
               <label>Destination URL</label>
@@ -401,11 +393,7 @@
             </div>
             <div class="form-group">
               <label>Website</label>
-              <input
-                type="url"
-                id="website"
-                placeholder="https://example.com"
-              />
+              <input type="url" id="website" placeholder="https://example.com" />
             </div>
           </div>
 
@@ -424,6 +412,31 @@
         document.getElementById('apiKeyInput').value = apiKey
         updateApiKeyStatus(true)
       }
+
+      // Event listeners (CSP-compliant)
+      document.addEventListener('DOMContentLoaded', function() {
+        // API Key button
+        document.getElementById('setApiKeyBtn').addEventListener('click', setApiKey)
+        
+        // Main action buttons
+        document.getElementById('createBtn').addEventListener('click', openCreateModal)
+        document.getElementById('clearAllBtn').addEventListener('click', clearAllQRCodes)
+        
+        // Modal controls
+        document.getElementById('closeModalBtn').addEventListener('click', closeModal)
+        
+        // Type selector buttons
+        document.getElementById('linkTypeBtn').addEventListener('click', () => selectType('link'))
+        document.getElementById('vcardTypeBtn').addEventListener('click', () => selectType('vcard'))
+        
+        // Form submission
+        document.getElementById('qrForm').addEventListener('submit', handleSubmit)
+        
+        // Load QR codes on page load if API key is available
+        if (apiKey) {
+          loadQRCodes()
+        }
+      })
 
       function setApiKey() {
         const input = document.getElementById('apiKeyInput')
@@ -514,9 +527,14 @@
           <div class="empty-state">
             <h3>No QR codes yet</h3>
             <p>Create your first QR code to get started</p>
-            <button onclick="openCreateModal()" ${!apiKey ? 'disabled' : ''}>+ Create QR Code</button>
+            <button id="emptyCreateBtn" ${!apiKey ? 'disabled' : ''}>+ Create QR Code</button>
           </div>
         `
+          // Add event listener to empty state button
+          const emptyCreateBtn = document.getElementById('emptyCreateBtn')
+          if (emptyCreateBtn) {
+            emptyCreateBtn.addEventListener('click', openCreateModal)
+          }
           clearAllBtn.style.display = 'none'
           return
         }
@@ -544,14 +562,25 @@
             <div class="qr-url">${code.qrUrl}</div>
           </div>
           <div class="qr-actions">
-            <button class="secondary" onclick="editQRCode(${code.id})" ${!apiKey ? 'disabled' : ''}>Edit</button>
-            <button class="secondary" onclick="downloadQR(${code.id})" ${!apiKey ? 'disabled' : ''}>Download</button>
-            <button class="danger" onclick="deleteQRCode(${code.id})" ${!apiKey ? 'disabled' : ''}>Delete</button>
+            <button class="secondary edit-btn" data-id="${code.id}" ${!apiKey ? 'disabled' : ''}>Edit</button>
+            <button class="secondary download-btn" data-id="${code.id}" ${!apiKey ? 'disabled' : ''}>Download</button>
+            <button class="danger delete-btn" data-id="${code.id}" ${!apiKey ? 'disabled' : ''}>Delete</button>
           </div>
         </div>
       `
           )
           .join('')
+
+        // Add event listeners to dynamically created buttons
+        document.querySelectorAll('.edit-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => editQRCode(e.target.dataset.id))
+        })
+        document.querySelectorAll('.download-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => downloadQR(e.target.dataset.id))
+        })
+        document.querySelectorAll('.delete-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => deleteQRCode(e.target.dataset.id))
+        })
       }
 
       function selectType(type) {
@@ -700,11 +729,6 @@
         if (response) {
           loadQRCodes()
         }
-      }
-
-      // Load QR codes on page load if API key is available
-      if (apiKey) {
-        loadQRCodes()
       }
     </script>
   </body>
