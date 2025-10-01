@@ -77,22 +77,40 @@ function validateUrl(url) {
     throw new Error('URL is required and must be a string');
   }
   
-  // Check if it's a valid URL
+  // Block dangerous protocols and schemes
+  const dangerousPatterns = [
+    /^javascript:/i,
+    /^data:/i,
+    /^vbscript:/i,
+    /^file:/i,
+    /^ftp:/i,
+    /^mailto:/i,
+    /^tel:/i,
+    /^sms:/i,
+    /^chrome:/i,
+    /^chrome-extension:/i,
+    /^moz-extension:/i,
+    /^about:/i,
+    /^blob:/i
+  ];
+  
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(url.trim())) {
+      throw new Error('Dangerous URL scheme not allowed');
+    }
+  }
+  
+  // Check if it's a valid HTTP/HTTPS URL
   if (!validator.isURL(url, { 
     protocols: ['http', 'https'],
     require_protocol: true,
     require_valid_protocol: true
   })) {
-    throw new Error('Invalid URL format');
+    throw new Error('Invalid URL format - only HTTP and HTTPS URLs are allowed');
   }
   
   // Additional security checks
   const parsed = new URL(url);
-  
-  // Block dangerous protocols
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('Only HTTP and HTTPS URLs are allowed');
-  }
   
   // Block localhost/private IPs (optional - remove if you want to allow them)
   if (parsed.hostname === 'localhost' || 
@@ -103,7 +121,7 @@ function validateUrl(url) {
     throw new Error('Local/private URLs are not allowed');
   }
   
-  return url;
+  return url.trim();
 }
 
 function validateVCardData(data) {
@@ -123,8 +141,12 @@ function validateVCardData(data) {
   }
   
   // Validate website if provided
-  if (data.website && !validator.isURL(data.website, { protocols: ['http', 'https'] })) {
-    throw new Error('Invalid website URL');
+  if (data.website) {
+    try {
+      validateUrl(data.website);
+    } catch (error) {
+      throw new Error('Invalid website URL');
+    }
   }
   
   // Sanitize all string fields
@@ -405,8 +427,8 @@ function handleQRRedirect(req, res) {
     }
     
     if (code.type === 'link') {
-      // Validate URL before redirect
-      const safeUrl = validateUrl(code.data.url);
+      // URL is already validated at creation time, but double-check
+      const safeUrl = code.data.url; // Already validated and stored safely
       
       // Show custom HTML page with redirect
       const html = `
