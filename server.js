@@ -52,8 +52,22 @@ app.post('/api/qr', async (req, res) => {
     
     qrCodes.push(newCode);
     
+    // Option 1: Use custom domain if set
+    // Option 2: Use URL shortener service
+    // Option 3: Use current domain but with custom path
+    
     const baseUrl = getBaseUrl(req);
-    const qrUrl = `${baseUrl}/q/${shortId}`;
+    let qrUrl;
+    
+    // Check if we should use a custom short URL
+    if (process.env.CUSTOM_SHORT_DOMAIN) {
+      // Use custom short domain (e.g., bit.ly, tinyurl.com, or your own domain)
+      qrUrl = `${process.env.CUSTOM_SHORT_DOMAIN}/${shortId}`;
+    } else {
+      // Use current domain
+      qrUrl = `${baseUrl}/q/${shortId}`;
+    }
+    
     const qrImage = await QRCode.toDataURL(qrUrl, { width: 512, margin: 2 });
     
     res.json({
@@ -71,7 +85,14 @@ app.get('/api/qr', async (req, res) => {
   try {
     const baseUrl = getBaseUrl(req);
     const codesWithImages = await Promise.all(qrCodes.map(async (code) => {
-      const qrUrl = `${baseUrl}/q/${code.shortId}`;
+      let qrUrl;
+      
+      if (process.env.CUSTOM_SHORT_DOMAIN) {
+        qrUrl = `${process.env.CUSTOM_SHORT_DOMAIN}/${code.shortId}`;
+      } else {
+        qrUrl = `${baseUrl}/q/${code.shortId}`;
+      }
+      
       const qrImage = await QRCode.toDataURL(qrUrl, { width: 512, margin: 2 });
       
       return {
@@ -98,7 +119,14 @@ app.get('/api/qr/:id', async (req, res) => {
     }
     
     const baseUrl = getBaseUrl(req);
-    const qrUrl = `${baseUrl}/q/${code.shortId}`;
+    let qrUrl;
+    
+    if (process.env.CUSTOM_SHORT_DOMAIN) {
+      qrUrl = `${process.env.CUSTOM_SHORT_DOMAIN}/${code.shortId}`;
+    } else {
+      qrUrl = `${baseUrl}/q/${code.shortId}`;
+    }
+    
     const qrImage = await QRCode.toDataURL(qrUrl, { width: 512, margin: 2 });
     
     res.json({
@@ -165,7 +193,14 @@ app.get('/api/qr/:id/image', async (req, res) => {
     }
     
     const baseUrl = getBaseUrl(req);
-    const qrUrl = `${baseUrl}/q/${code.shortId}`;
+    let qrUrl;
+    
+    if (process.env.CUSTOM_SHORT_DOMAIN) {
+      qrUrl = `${process.env.CUSTOM_SHORT_DOMAIN}/${code.shortId}`;
+    } else {
+      qrUrl = `${baseUrl}/q/${code.shortId}`;
+    }
+    
     const buffer = await QRCode.toBuffer(qrUrl, { width: 512, margin: 2 });
     
     res.type('png').send(buffer);
@@ -463,5 +498,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`BASE_URL: ${process.env.BASE_URL || 'not set'}`);
+  console.log(`CUSTOM_SHORT_DOMAIN: ${process.env.CUSTOM_SHORT_DOMAIN || 'not set'}`);
 });
-// Deployment timestamp: Wed Oct  1 11:53:26 BST 2025
