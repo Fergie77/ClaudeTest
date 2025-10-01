@@ -8,3 +8,5 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: BASE_URL
+        value: https://your-app-name.onrender.com
