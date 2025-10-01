@@ -244,3 +244,4 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`BASE_URL: ${process.env.BASE_URL || 'not set'}`);
 });
+// Force redeploy Wed Oct  1 11:49:38 BST 2025
