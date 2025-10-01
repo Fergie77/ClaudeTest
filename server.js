@@ -16,13 +16,14 @@ const app = express();
 let qrCodes = [];
 let nextId = 1;
 
-// Security middleware
+// Security middleware with adjusted CSP for inline scripts
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"], // Allow inline scripts for our landing pages
+      scriptSrcAttr: ["'unsafe-inline'"], // Allow inline event handlers
       imgSrc: ["'self'", "data:"],
       connectSrc: ["'self'"],
       fontSrc: ["'self'"],
@@ -728,4 +729,3 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`BASE_URL: ${process.env.BASE_URL || 'not set'}`);
   console.log(`CUSTOM_SHORT_DOMAIN: ${process.env.CUSTOM_SHORT_DOMAIN || 'not set'}`);
 });
-// Force redeploy Wed Oct  1 14:51:33 BST 2025
