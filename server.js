@@ -202,7 +202,17 @@ app.get('/api/qr/:id/image', async (req, res) => {
 
 // Handle QR redirects - support both /q/:shortId and direct /:shortId for custom domains
 app.get('/q/:shortId', handleQRRedirect);
-app.get('/:shortId', handleQRRedirect);
+
+// Handle direct shortId paths (for custom domains) - but only if it's not an API route
+app.get('/:shortId', (req, res, next) => {
+  // Skip if it's an API route or static file
+  if (req.params.shortId.startsWith('api') || 
+      req.params.shortId.includes('.') ||
+      req.params.shortId === 'health') {
+    return next();
+  }
+  handleQRRedirect(req, res);
+});
 
 function handleQRRedirect(req, res) {
   try {
