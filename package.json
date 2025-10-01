@@ -5,17 +5,11 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "build": "echo 'Build complete'",
-    "netlify:dev": "netlify dev"
+    "build": "echo 'Build complete'"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "better-sqlite3": "^9.2.2",
     "qrcode": "^1.5.3",
-    "nanoid": "^5.0.4",
-    "@netlify/functions": "^2.0.0"
-  },
-  "devDependencies": {
-    "netlify-cli": "^17.0.0"
+    "nanoid": "^5.0.4"
   }
 }

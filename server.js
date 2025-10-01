@@ -1,5 +1,4 @@
 import express from 'express';
-import Database from 'better-sqlite3';
 import QRCode from 'qrcode';
 import { nanoid } from 'nanoid';
 import { fileURLToPath } from 'url';
@@ -10,9 +9,9 @@ const __dirname = dirname(__filename);
 
 const app = express();
 
-// Use environment-specific database path
-const dbPath = process.env.DATABASE_URL || join(__dirname, 'qrcodes.db');
-const db = new Database(dbPath);
+// In-memory storage for free tier (replaces SQLite)
+let qrCodes = [];
+let nextId = 1;
 
 // Use environment variable for BASE_URL or construct from request
 const getBaseUrl = (req) => {
@@ -25,23 +24,16 @@ const getBaseUrl = (req) => {
   return `${protocol}://${host}`;
 };
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS qr_codes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    short_id TEXT UNIQUE NOT NULL,
-    type TEXT NOT NULL,
-    data TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
 app.use(express.json());
 app.use(express.static('public'));
 
-// Health check endpoint for free hosting platforms
+// Health check endpoint for Render
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    qrCodesCount: qrCodes.length 
+  });
 });
 
 app.post('/api/qr', async (req, res) => {
@@ -49,22 +41,25 @@ app.post('/api/qr', async (req, res) => {
     const { type, data } = req.body;
     const shortId = nanoid(8);
     
-    const stmt = db.prepare(
-      'INSERT INTO qr_codes (short_id, type, data) VALUES (?, ?, ?)'
-    );
-    const result = stmt.run(shortId, type, JSON.stringify(data));
+    const newCode = {
+      id: nextId++,
+      shortId,
+      type,
+      data,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    qrCodes.push(newCode);
     
     const baseUrl = getBaseUrl(req);
     const qrUrl = `${baseUrl}/q/${shortId}`;
     const qrImage = await QRCode.toDataURL(qrUrl, { width: 512, margin: 2 });
     
     res.json({
-      id: result.lastInsertRowid,
-      shortId,
+      ...newCode,
       qrUrl,
-      qrImage,
-      type,
-      data
+      qrImage
     });
   } catch (error) {
     console.error('Error creating QR code:', error);
@@ -74,17 +69,13 @@ app.post('/api/qr', async (req, res) => {
 
 app.get('/api/qr', async (req, res) => {
   try {
-    const stmt = db.prepare('SELECT * FROM qr_codes ORDER BY created_at DESC');
-    const codes = stmt.all();
-    
     const baseUrl = getBaseUrl(req);
-    const codesWithImages = await Promise.all(codes.map(async (code) => {
-      const qrUrl = `${baseUrl}/q/${code.short_id}`;
+    const codesWithImages = await Promise.all(qrCodes.map(async (code) => {
+      const qrUrl = `${baseUrl}/q/${code.shortId}`;
       const qrImage = await QRCode.toDataURL(qrUrl, { width: 512, margin: 2 });
       
       return {
         ...code,
-        data: JSON.parse(code.data),
         qrUrl,
         qrImage
       };
@@ -99,20 +90,19 @@ app.get('/api/qr', async (req, res) => {
 
 app.get('/api/qr/:id', async (req, res) => {
   try {
-    const stmt = db.prepare('SELECT * FROM qr_codes WHERE id = ?');
-    const code = stmt.get(req.params.id);
+    const id = parseInt(req.params.id);
+    const code = qrCodes.find(c => c.id === id);
     
     if (!code) {
       return res.status(404).json({ error: 'QR code not found' });
     }
     
     const baseUrl = getBaseUrl(req);
-    const qrUrl = `${baseUrl}/q/${code.short_id}`;
+    const qrUrl = `${baseUrl}/q/${code.shortId}`;
     const qrImage = await QRCode.toDataURL(qrUrl, { width: 512, margin: 2 });
     
     res.json({
       ...code,
-      data: JSON.parse(code.data),
       qrUrl,
       qrImage
     });
@@ -124,16 +114,21 @@ app.get('/api/qr/:id', async (req, res) => {
 
 app.put('/api/qr/:id', (req, res) => {
   try {
+    const id = parseInt(req.params.id);
     const { type, data } = req.body;
     
-    const stmt = db.prepare(
-      'UPDATE qr_codes SET type = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    );
-    const result = stmt.run(type, JSON.stringify(data), req.params.id);
+    const codeIndex = qrCodes.findIndex(c => c.id === id);
     
-    if (result.changes === 0) {
+    if (codeIndex === -1) {
       return res.status(404).json({ error: 'QR code not found' });
     }
+    
+    qrCodes[codeIndex] = {
+      ...qrCodes[codeIndex],
+      type,
+      data,
+      updatedAt: new Date().toISOString()
+    };
     
     res.json({ success: true });
   } catch (error) {
@@ -144,12 +139,14 @@ app.put('/api/qr/:id', (req, res) => {
 
 app.delete('/api/qr/:id', (req, res) => {
   try {
-    const stmt = db.prepare('DELETE FROM qr_codes WHERE id = ?');
-    const result = stmt.run(req.params.id);
+    const id = parseInt(req.params.id);
+    const codeIndex = qrCodes.findIndex(c => c.id === id);
     
-    if (result.changes === 0) {
+    if (codeIndex === -1) {
       return res.status(404).json({ error: 'QR code not found' });
     }
+    
+    qrCodes.splice(codeIndex, 1);
     
     res.json({ success: true });
   } catch (error) {
@@ -160,15 +157,15 @@ app.delete('/api/qr/:id', (req, res) => {
 
 app.get('/api/qr/:id/image', async (req, res) => {
   try {
-    const stmt = db.prepare('SELECT short_id FROM qr_codes WHERE id = ?');
-    const code = stmt.get(req.params.id);
+    const id = parseInt(req.params.id);
+    const code = qrCodes.find(c => c.id === id);
     
     if (!code) {
       return res.status(404).send('Not found');
     }
     
     const baseUrl = getBaseUrl(req);
-    const qrUrl = `${baseUrl}/q/${code.short_id}`;
+    const qrUrl = `${baseUrl}/q/${code.shortId}`;
     const buffer = await QRCode.toBuffer(qrUrl, { width: 512, margin: 2 });
     
     res.type('png').send(buffer);
@@ -180,21 +177,19 @@ app.get('/api/qr/:id/image', async (req, res) => {
 
 app.get('/q/:shortId', (req, res) => {
   try {
-    const stmt = db.prepare('SELECT type, data FROM qr_codes WHERE short_id = ?');
-    const code = stmt.get(req.params.shortId);
+    const shortId = req.params.shortId;
+    const code = qrCodes.find(c => c.shortId === shortId);
     
     if (!code) {
       return res.status(404).send('QR code not found');
     }
     
-    const data = JSON.parse(code.data);
-    
     if (code.type === 'link') {
-      res.redirect(data.url);
+      res.redirect(code.data.url);
     } else if (code.type === 'vcard') {
-      const vcard = generateVCard(data);
+      const vcard = generateVCard(code.data);
       res.type('text/vcard');
-      res.header('Content-Disposition', `attachment; filename="${data.firstName}_${data.lastName}.vcf"`);
+      res.header('Content-Disposition', `attachment; filename="${code.data.firstName}_${code.data.lastName}.vcf"`);
       res.send(vcard);
     }
   } catch (error) {
@@ -225,4 +220,6 @@ function generateVCard(data) {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`BASE_URL: ${process.env.BASE_URL || 'not set'}`);
 });

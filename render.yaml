@@ -9,4 +9,5 @@ services:
       - key: NODE_ENV
         value: production
       - key: BASE_URL
-        value: https://your-app-name.onrender.com
+        value: https://qr-manager-jbqt.onrender.com
+    healthCheckPath: /health
