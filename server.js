@@ -3,6 +3,9 @@ import QRCode from 'qrcode';
 import { nanoid } from 'nanoid';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import validator from 'validator';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,6 +15,50 @@ const app = express();
 // In-memory storage for free tier (replaces SQLite)
 let qrCodes = [];
 let nextId = 1;
+
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
+}));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const strictLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // limit each IP to 20 requests per windowMs for API
+  message: 'Too many API requests from this IP, please try again later.',
+});
+
+app.use(limiter);
+app.use('/api', strictLimiter);
+
+// Request size limit
+app.use(express.json({ limit: '1mb' }));
+app.use(express.static('public'));
 
 // Use environment variable for BASE_URL or construct from request
 const getBaseUrl = (req) => {
@@ -24,28 +71,126 @@ const getBaseUrl = (req) => {
   return `${protocol}://${host}`;
 };
 
-app.use(express.json());
-app.use(express.static('public'));
+// Input validation functions
+function validateUrl(url) {
+  if (!url || typeof url !== 'string') {
+    throw new Error('URL is required and must be a string');
+  }
+  
+  // Check if it's a valid URL
+  if (!validator.isURL(url, { 
+    protocols: ['http', 'https'],
+    require_protocol: true,
+    require_valid_protocol: true
+  })) {
+    throw new Error('Invalid URL format');
+  }
+  
+  // Additional security checks
+  const parsed = new URL(url);
+  
+  // Block dangerous protocols
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Only HTTP and HTTPS URLs are allowed');
+  }
+  
+  // Block localhost/private IPs (optional - remove if you want to allow them)
+  if (parsed.hostname === 'localhost' || 
+      parsed.hostname.startsWith('127.') ||
+      parsed.hostname.startsWith('192.168.') ||
+      parsed.hostname.startsWith('10.') ||
+      parsed.hostname.startsWith('172.')) {
+    throw new Error('Local/private URLs are not allowed');
+  }
+  
+  return url;
+}
 
-// Health check endpoint for Render
+function validateVCardData(data) {
+  const required = ['firstName', 'lastName'];
+  const allowed = ['firstName', 'lastName', 'email', 'phone', 'organization', 'title', 'website'];
+  
+  // Check required fields
+  for (const field of required) {
+    if (!data[field] || typeof data[field] !== 'string' || data[field].trim().length === 0) {
+      throw new Error(`${field} is required`);
+    }
+  }
+  
+  // Validate email if provided
+  if (data.email && !validator.isEmail(data.email)) {
+    throw new Error('Invalid email format');
+  }
+  
+  // Validate website if provided
+  if (data.website && !validator.isURL(data.website, { protocols: ['http', 'https'] })) {
+    throw new Error('Invalid website URL');
+  }
+  
+  // Sanitize all string fields
+  const sanitized = {};
+  for (const field of allowed) {
+    if (data[field]) {
+      sanitized[field] = validator.escape(data[field].trim());
+    }
+  }
+  
+  return sanitized;
+}
+
+function validateQRType(type) {
+  if (!type || typeof type !== 'string') {
+    throw new Error('Type is required');
+  }
+  
+  if (!['link', 'vcard'].includes(type)) {
+    throw new Error('Invalid QR code type');
+  }
+  
+  return type;
+}
+
+// HTML escaping function
+function escapeHtml(text) {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;')
+    .replace(/\//g, '&#x2F;');
+}
+
+// Health check endpoint for Render (no sensitive info)
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    timestamp: new Date().toISOString(),
-    qrCodesCount: qrCodes.length 
+    timestamp: new Date().toISOString()
   });
 });
 
 app.post('/api/qr', async (req, res) => {
   try {
     const { type, data } = req.body;
+    
+    // Validate input
+    const validatedType = validateQRType(type);
+    let validatedData;
+    
+    if (validatedType === 'link') {
+      validatedData = { url: validateUrl(data.url) };
+    } else if (validatedType === 'vcard') {
+      validatedData = validateVCardData(data);
+    }
+    
     const shortId = nanoid(8);
     
     const newCode = {
       id: nextId++,
       shortId,
-      type,
-      data,
+      type: validatedType,
+      data: validatedData,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -70,7 +215,7 @@ app.post('/api/qr', async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating QR code:', error);
-    res.status(500).json({ error: 'Failed to create QR code' });
+    res.status(400).json({ error: error.message || 'Failed to create QR code' });
   }
 });
 
@@ -104,6 +249,11 @@ app.get('/api/qr', async (req, res) => {
 app.get('/api/qr/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
+    
+    if (isNaN(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid QR code ID' });
+    }
+    
     const code = qrCodes.find(c => c.id === id);
     
     if (!code) {
@@ -134,7 +284,22 @@ app.get('/api/qr/:id', async (req, res) => {
 app.put('/api/qr/:id', (req, res) => {
   try {
     const id = parseInt(req.params.id);
+    
+    if (isNaN(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid QR code ID' });
+    }
+    
     const { type, data } = req.body;
+    
+    // Validate input
+    const validatedType = validateQRType(type);
+    let validatedData;
+    
+    if (validatedType === 'link') {
+      validatedData = { url: validateUrl(data.url) };
+    } else if (validatedType === 'vcard') {
+      validatedData = validateVCardData(data);
+    }
     
     const codeIndex = qrCodes.findIndex(c => c.id === id);
     
@@ -144,21 +309,26 @@ app.put('/api/qr/:id', (req, res) => {
     
     qrCodes[codeIndex] = {
       ...qrCodes[codeIndex],
-      type,
-      data,
+      type: validatedType,
+      data: validatedData,
       updatedAt: new Date().toISOString()
     };
     
     res.json({ success: true });
   } catch (error) {
     console.error('Error updating QR code:', error);
-    res.status(500).json({ error: 'Failed to update QR code' });
+    res.status(400).json({ error: error.message || 'Failed to update QR code' });
   }
 });
 
 app.delete('/api/qr/:id', (req, res) => {
   try {
     const id = parseInt(req.params.id);
+    
+    if (isNaN(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid QR code ID' });
+    }
+    
     const codeIndex = qrCodes.findIndex(c => c.id === id);
     
     if (codeIndex === -1) {
@@ -177,6 +347,11 @@ app.delete('/api/qr/:id', (req, res) => {
 app.get('/api/qr/:id/image', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
+    
+    if (isNaN(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid QR code ID' });
+    }
+    
     const code = qrCodes.find(c => c.id === id);
     
     if (!code) {
@@ -217,6 +392,12 @@ app.get('/:shortId', (req, res, next) => {
 function handleQRRedirect(req, res) {
   try {
     const shortId = req.params.shortId;
+    
+    // Validate shortId format
+    if (!shortId || typeof shortId !== 'string' || shortId.length !== 8) {
+      return res.status(400).send('Invalid QR code');
+    }
+    
     const code = qrCodes.find(c => c.shortId === shortId);
     
     if (!code) {
@@ -224,6 +405,9 @@ function handleQRRedirect(req, res) {
     }
     
     if (code.type === 'link') {
+      // Validate URL before redirect
+      const safeUrl = validateUrl(code.data.url);
+      
       // Show custom HTML page with redirect
       const html = `
 <!DOCTYPE html>
@@ -305,13 +489,14 @@ function handleQRRedirect(req, res) {
         <div class="message">Welcome! Taking you to your destination...</div>
         <div class="spinner"></div>
         <div class="countdown">Redirecting in <span id="timer">3</span> seconds</div>
-        <a href="${code.data.url}" id="manualLink" class="manual-link" style="display: none;">Click here if not redirected</a>
+        <a href="${escapeHtml(safeUrl)}" id="manualLink" class="manual-link" style="display: none;">Click here if not redirected</a>
     </div>
 
     <script>
         let countdown = 3;
         const timerElement = document.getElementById('timer');
         const manualLinkElement = document.getElementById('manualLink');
+        const safeUrl = '${escapeHtml(safeUrl)}';
         
         const countdownInterval = setInterval(() => {
             countdown--;
@@ -319,7 +504,7 @@ function handleQRRedirect(req, res) {
             
             if (countdown <= 0) {
                 clearInterval(countdownInterval);
-                window.location.href = '${code.data.url}';
+                window.location.href = safeUrl;
             }
         }, 1000);
         
@@ -330,7 +515,7 @@ function handleQRRedirect(req, res) {
         
         // Auto-redirect after 5 seconds regardless
         setTimeout(() => {
-            window.location.href = '${code.data.url}';
+            window.location.href = safeUrl;
         }, 5000);
     </script>
 </body>
@@ -419,7 +604,7 @@ function handleQRRedirect(req, res) {
         <div class="message">Preparing your contact card...</div>
         <div class="spinner"></div>
         <div class="countdown">Download starting in <span id="timer">3</span> seconds</div>
-        <a href="/download/${shortId}" id="manualLink" class="manual-link" style="display: none;">Click here to download contact card</a>
+        <a href="/download/${escapeHtml(shortId)}" id="manualLink" class="manual-link" style="display: none;">Click here to download contact card</a>
     </div>
 
     <script>
@@ -433,7 +618,7 @@ function handleQRRedirect(req, res) {
             
             if (countdown <= 0) {
                 clearInterval(countdownInterval);
-                window.location.href = '/download/${shortId}';
+                window.location.href = '/download/${escapeHtml(shortId)}';
             }
         }, 1000);
         
@@ -444,7 +629,7 @@ function handleQRRedirect(req, res) {
         
         // Auto-redirect after 5 seconds regardless
         setTimeout(() => {
-            window.location.href = '/download/${shortId}';
+            window.location.href = '/download/${escapeHtml(shortId)}';
         }, 5000);
     </script>
 </body>
@@ -462,6 +647,12 @@ function handleQRRedirect(req, res) {
 app.get('/download/:shortId', (req, res) => {
   try {
     const shortId = req.params.shortId;
+    
+    // Validate shortId format
+    if (!shortId || typeof shortId !== 'string' || shortId.length !== 8) {
+      return res.status(400).send('Invalid QR code');
+    }
+    
     const code = qrCodes.find(c => c.shortId === shortId);
     
     if (!code || code.type !== 'vcard') {
@@ -470,7 +661,7 @@ app.get('/download/:shortId', (req, res) => {
     
     const vcard = generateVCard(code.data);
     res.type('text/vcard');
-    res.header('Content-Disposition', `attachment; filename="${code.data.firstName}_${code.data.lastName}.vcf"`);
+    res.header('Content-Disposition', `attachment; filename="${escapeHtml(code.data.firstName)}_${escapeHtml(code.data.lastName)}.vcf"`);
     res.send(vcard);
   } catch (error) {
     console.error('Error downloading vCard:', error);
@@ -495,6 +686,17 @@ function generateVCard(data) {
   lines.push('END:VCARD');
   
   return lines.join('\r\n');
+}
+
+// HTTPS redirect middleware (for production)
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.header('x-forwarded-proto') !== 'https') {
+      res.redirect(`https://${req.header('host')}${req.url}`);
+    } else {
+      next();
+    }
+  });
 }
 
 const PORT = process.env.PORT || 3000;
