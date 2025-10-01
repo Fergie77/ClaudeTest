@@ -185,16 +185,37 @@ app.get('/q/:shortId', (req, res) => {
     }
     
     if (code.type === 'link') {
-      res.redirect(code.data.url);
+      // Show custom landing page with redirect
+      const redirectUrl = `/redirect.html?url=${encodeURIComponent(code.data.url)}&type=link`;
+      res.redirect(redirectUrl);
     } else if (code.type === 'vcard') {
-      const vcard = generateVCard(code.data);
-      res.type('text/vcard');
-      res.header('Content-Disposition', `attachment; filename="${code.data.firstName}_${code.data.lastName}.vcf"`);
-      res.send(vcard);
+      // For vCards, show landing page then download
+      const redirectUrl = `/redirect.html?url=${encodeURIComponent(`/download/${shortId}`)}&type=vcard`;
+      res.redirect(redirectUrl);
     }
   } catch (error) {
     console.error('Error processing QR redirect:', error);
     res.status(500).send('Error processing QR code');
+  }
+});
+
+// Handle vCard downloads
+app.get('/download/:shortId', (req, res) => {
+  try {
+    const shortId = req.params.shortId;
+    const code = qrCodes.find(c => c.shortId === shortId);
+    
+    if (!code || code.type !== 'vcard') {
+      return res.status(404).send('Contact card not found');
+    }
+    
+    const vcard = generateVCard(code.data);
+    res.type('text/vcard');
+    res.header('Content-Disposition', `attachment; filename="${code.data.firstName}_${code.data.lastName}.vcf"`);
+    res.send(vcard);
+  } catch (error) {
+    console.error('Error downloading vCard:', error);
+    res.status(500).send('Error downloading contact card');
   }
 });
 
