@@ -37,7 +37,7 @@ app.use(helmet({
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === "production" ? 200 : 1000, // Environment-aware rate limiting
+  max: 100, // limit each IP to 100 requests per windowMs
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -45,7 +45,7 @@ const limiter = rateLimit({
 
 const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === "production" ? 50 : 200, // Environment-aware API rate limiting
+  max: 20, // limit each IP to 20 requests per windowMs for API
   message: 'Too many API requests from this IP, please try again later.',
 });
 
@@ -731,8 +731,7 @@ if (process.env.NODE_ENV === 'production') {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
-  console.log(`Rate limits: ${process.env.NODE_ENV === "production" ? "Production (strict)" : "Development (lenient)"}`);  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`BASE_URL: ${process.env.BASE_URL || 'not set'}`);
   console.log(`CUSTOM_SHORT_DOMAIN: ${process.env.CUSTOM_SHORT_DOMAIN || 'not set'}`);
 });
